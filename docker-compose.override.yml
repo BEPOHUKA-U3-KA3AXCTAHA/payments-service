@@ -1,0 +1,14 @@
+services:
+  api:
+    environment:
+      WEBHOOK_ALLOWED_HOSTS: webhook-receiver
+
+  consumer:
+    environment:
+      WEBHOOK_ALLOWED_HOSTS: webhook-receiver
+
+  # принимает вебхуки и печатает их тела в лог: docker compose logs webhook-receiver
+  webhook-receiver:
+    image: mendhak/http-https-echo:42
+    environment:
+      DISABLE_REQUEST_LOGS: "true"

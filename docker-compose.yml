@@ -1,0 +1,107 @@
+x-app: &app
+  build: .
+  env_file:
+    - path: .env
+      required: false
+  environment: &env
+    DATABASE_URL: postgresql+asyncpg://payments:payments@postgres:5432/payments
+    RABBITMQ_URL: amqp://payments:payments@rabbitmq:5672/
+    # для проверки сойдут и так, на сервере поменять в .env
+    API_KEY: ${API_KEY:-dev-api-key}
+    WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-webhook-secret}
+  restart: on-failure
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: payments
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U payments -d payments"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    # от hostname зависит каталог данных, без него очереди теряются при пересоздании
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: payments
+      RABBITMQ_DEFAULT_PASS: payments
+    ports:
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  migrations:
+    <<: *app
+    command: alembic upgrade head
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+
+  outbox-relay:
+    <<: *app
+    command: faststream run app.entrypoints.relay:create_app --factory
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  consumer:
+    <<: *app
+    command: faststream run app.entrypoints.consumer:create_app --factory
+    environment:
+      <<: *env
+      GATEWAY_URL: http://gateway:8001
+    stop_grace_period: 20s
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+
+  # эмулятор платежного шлюза, списания хранит в своем файле SQLite
+  gateway:
+    <<: *app
+    command: uvicorn emulator.main:create_app --factory --host 0.0.0.0 --port 8001
+    environment:
+      DB_PATH: /data/gateway.db
+    volumes:
+      - gateway-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://localhost:8001/health", timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  gateway-data:

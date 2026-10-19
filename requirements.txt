@@ -1,0 +1,9 @@
+alembic==1.20.0
+asyncpg==0.32.0
+fastapi==0.143.0
+faststream[cli,rabbit]==0.7.7
+httpx==0.28.1
+pydantic==2.14.1
+pydantic-settings==2.15.0
+sqlalchemy[asyncio]==2.0.54
+uvicorn==0.54.0
